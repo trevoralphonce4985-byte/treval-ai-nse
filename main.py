@@ -1,8 +1,8 @@
 # main.py — Treval AI Financial Engine v2.1 (Final: Pure Python)
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
@@ -69,14 +69,14 @@ MOCK_DATA = [
 # Safe parsing helpers
 def safe_float(s: str, default=0.0):
     try:
-        return float(re.sub(r'[^\d.-]', '', s))
-    except:
+        return float(re.sub(r"[^\d.-]", "", s))
+    except Exception:
         return default
 
 def safe_int(s: str, default=0):
     try:
-        return int(re.sub(r'[^\d]', '', s))
-    except:
+        return int(re.sub(r"[^\d]", "", s))
+    except Exception:
         return default
 
 # ----------------------------------------------------
@@ -171,7 +171,7 @@ async def root():
         "service": "Treval AI Financial Engine v2.1",
         "cloud_hosted": True,
         "pure_python": True,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now().isoformat(), # Updated to use timezone-aware datetime
         "note": "This API runs 24/7 on cloud — no PC required! (Pure Python build)"
     }
 
@@ -198,4 +198,4 @@ async def wealth_picks():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "time": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "time": datetime.now().isoformat()} # Updated to use timezone-aware datetime
