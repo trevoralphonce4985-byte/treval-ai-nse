@@ -1,7 +1,7 @@
-# main.py — Treval AI Financial Engine v2.1 (Cloud-Ready, Pydantic V1 Compatible)
+# main.py — Treval AI Financial Engine v2.1 (Cloud-Ready, Pydantic V2 Compatible)
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, validator  # Pydantic V1 import
+from pydantic import BaseModel, Field  # Pydantic V2 import
 from typing import List, Optional
 from datetime import datetime
 import requests
@@ -21,7 +21,7 @@ logger = logging.getLogger("TrevalAI")
 app = FastAPI(
     title="Treval AI Financial Engine",
     version="2.1.0",
-    description="Live NSE Stock Analysis API (Cloud Hosted, Pydantic V1)"
+    description="Live NSE Stock Analysis API (Cloud Hosted, Pydantic V2)"
 )
 
 app.add_middleware(
@@ -33,7 +33,7 @@ app.add_middleware(
 )
 
 # ----------------------------------------------------
-# Data Models (Pydantic V1 Compatible)
+# Data Models (Pydantic V2 Compatible)
 # ----------------------------------------------------
 class Stock(BaseModel):
     ticker: str
@@ -170,7 +170,7 @@ async def root():
         "status": "ONLINE",
         "service": "Treval AI Financial Engine v2.1",
         "cloud_hosted": True,
-        "pydantic_version": "V1 (Pure Python)",
+        "pydantic_version": "V2 (Compatible Build)",
         "timestamp": datetime.utcnow().isoformat(),
         "note": "This API runs 24/7 on cloud — no PC required!"
     }
