@@ -1,15 +1,15 @@
-# render.yaml — Render Blueprint for Treval AI NSE (Free Tier)
+# render.yaml
 services:
   - type: web
     name: treval-ai-nse
     env: python
-    region: frankfurt
-    plan: free
+    region: frankfurt # Or your preferred region
+    plan: free # Use the free tier
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.11
+        value: 3.14.3 # Match the version in the logs
     healthCheckPath: /health
-    autoDeploy: true  # 🔑 AUTO-DEPLOY ON PUSH TO main
-    gitBranch: main   # Deploy from 'main' branch
+    autoDeploy: true
+    gitBranch: main
