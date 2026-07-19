@@ -1,7 +1,7 @@
-# main.py — Treval AI Financial Engine v2.1 (Cloud-Ready, Pydantic V2 Compatible)
+# main.py — Treval AI Financial Engine v2.1 (Final: Pure Python)
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field  # Pydantic V2 import
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 import requests
@@ -21,7 +21,7 @@ logger = logging.getLogger("TrevalAI")
 app = FastAPI(
     title="Treval AI Financial Engine",
     version="2.1.0",
-    description="Live NSE Stock Analysis API (Cloud Hosted, Pydantic V2)"
+    description="Live NSE Stock Analysis API (Final: Pure Python)"
 )
 
 app.add_middleware(
@@ -33,7 +33,7 @@ app.add_middleware(
 )
 
 # ----------------------------------------------------
-# Data Models (Pydantic V2 Compatible)
+# Data Models (Pydantic V1)
 # ----------------------------------------------------
 class Stock(BaseModel):
     ticker: str
@@ -58,7 +58,7 @@ class WealthPick(BaseModel):
     price: float
 
 # ----------------------------------------------------
-# Mock Data (fallback if scraping fails)
+# Mock Data
 MOCK_DATA = [
     Stock(ticker="SCOM", company="Safaricom PLC", price=35.55, change=0.15, change_percent=0.42, volume=1850000, dividend_yield=5.2, pe_ratio=14.8, recommendation="BUY"),
     Stock(ticker="EQTY", company="Equity Group Holdings", price=86.50, change=-0.40, change_percent=-0.46, volume=930000, dividend_yield=4.8, pe_ratio=6.4, recommendation="BUY"),
@@ -87,7 +87,7 @@ def fetch_live_stocks():
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
         resp = requests.get("https://mystocks.co.ke/", headers=headers, timeout=10)
-        resp.raise_for_status()  # Raise an exception for bad status codes
+        resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
 
         # Look for any table with stock data
@@ -112,7 +112,7 @@ def fetch_live_stocks():
             if price <= 0:
                 continue
 
-            # Extract change % (look for % symbol)
+            # Extract change %
             change_pct = 0.0
             for i, col in enumerate(cols[2:], start=2):
                 txt = col.get_text(strip=True)
@@ -170,9 +170,9 @@ async def root():
         "status": "ONLINE",
         "service": "Treval AI Financial Engine v2.1",
         "cloud_hosted": True,
-        "pydantic_version": "V2 (Compatible Build)",
+        "pure_python": True,
         "timestamp": datetime.utcnow().isoformat(),
-        "note": "This API runs 24/7 on cloud — no PC required!"
+        "note": "This API runs 24/7 on cloud — no PC required! (Pure Python build)"
     }
 
 @app.get("/api/v1/wealth-picks")
