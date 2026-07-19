@@ -1,4 +1,4 @@
-# main.py — Treval AI Financial Engine v2.1 (Free Tier Optimized)
+# main.py — Treval AI NSE (Render Free Tier Optimized)
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -21,7 +21,7 @@ logger = logging.getLogger("TrevalAI")
 app = FastAPI(
     title="Treval AI NSE",
     version="2.1.0",
-    description="Lightweight NSE Screener for Free Tier"
+    description="Lightweight NSE Screener for Render Free Plan"
 )
 
 app.add_middleware(
@@ -57,7 +57,7 @@ class WealthPick(BaseModel):
     price: float
 
 # ----------------------------------------------------
-# Mock Data (fallback — ensures uptime even if scraping fails)
+# Mock Data (fallback — ensures uptime)
 MOCK_DATA = [
     Stock(ticker="SCOM", company="Safaricom PLC", price=35.55, change=0.15, change_percent=0.42, volume=1850000, dividend_yield=5.2, pe_ratio=14.8, recommendation="BUY"),
     Stock(ticker="EQTY", company="Equity Group Holdings", price=86.50, change=-0.40, change_percent=-0.46, volume=930000, dividend_yield=4.8, pe_ratio=6.4, recommendation="BUY"),
@@ -65,7 +65,7 @@ MOCK_DATA = [
 ]
 
 # ----------------------------------------------------
-# Safe parsing (no bare except)
+# Safe parsing helpers
 def safe_float(s: str, default=0.0):
     try:
         return float(re.sub(r"[^\d.-]", "", s))
@@ -79,7 +79,7 @@ def safe_int(s: str, default=0):
         return default
 
 # ----------------------------------------------------
-# Scrape (lightweight — minimal HTML parsing)
+# Scrape (minimal — avoids heavy HTML parsing)
 def fetch_live_stocks():
     try:
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -87,14 +87,14 @@ def fetch_live_stocks():
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, 'html.parser')
 
-        # Try to find any table — fallback to mock if none found
-        table = soup.find('table') or soup.find('tbody')
+        # Try first table only — lightweight
+        table = soup.find('table')
         if not table:
-            logger.warning("No table → using mock")
+            logger.warning("No table found → using mock")
             return MOCK_DATA
 
         stocks = []
-        rows = table.find_all('tr')[1:6]  # Only 5 rows to save RAM/CPU
+        rows = table.find_all('tr')[1:5]  # Only 4 rows to save RAM/CPU
         for row in rows:
             cols = row.find_all(['td', 'th'])
             if len(cols) < 2:
@@ -125,13 +125,9 @@ def fetch_live_stocks():
                 )
             )
 
-        if stocks:
-            return stocks
-        logger.warning("No valid stocks → using mock")
-        return MOCK_DATA
+        return stocks if stocks else MOCK_DATA
 
-    except Exception as e:
-        logger.error(f"Scrape failed: {e}")
+    except Exception:
         return MOCK_DATA
 
 # ----------------------------------------------------
@@ -159,27 +155,25 @@ async def root():
         "service": "Treval AI NSE",
         "free_tier": True,
         "timestamp": datetime.now().isoformat(),
-        "note": "Running on Render Free Plan — no PC required"
+        "note": "Auto-deployed via Render Blueprint"
     }
 
 @app.get("/api/v1/wealth-picks")
 async def wealth_picks():
     stocks = fetch_live_stocks()
-    picks = []
-    for stock in stocks:
-        score = calculate_score(stock)
-        picks.append(
-            WealthPick(
-                ticker=stock.ticker,
-                company=stock.company,
-                score=score,
-                recommendation=generate_recommendation(score),
-                dividend_yield=stock.dividend_yield,
-                pe_ratio=stock.pe_ratio,
-                momentum=round((score / 75) * 100, 1),
-                price=stock.price
-            )
+    picks = [
+        WealthPick(
+            ticker=s.ticker,
+            company=s.company,
+            score=calculate_score(s),
+            recommendation=generate_recommendation(calculate_score(s)),
+            dividend_yield=s.dividend_yield,
+            pe_ratio=s.pe_ratio,
+            momentum=round((calculate_score(s) / 75) * 100, 1),
+            price=s.price
         )
+        for s in stocks
+    ]
     picks.sort(key=lambda x: x.score, reverse=True)
     return picks
 
