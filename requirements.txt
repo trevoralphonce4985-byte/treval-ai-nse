@@ -1,6 +1,5 @@
-   fastapi==0.104.1
-   uvicorn[standard]==0.29.0
+   fastapi==0.103.2
+   uvicorn[standard]==0.22.0
    requests==2.31.0
    beautifulsoup4==4.12.2
-   pydantic==2.8.2
-   pydantic-extra-types==2.9.0
+   pydantic==1.10.13
