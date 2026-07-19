@@ -1,3 +1,4 @@
+# render.yaml — Render Blueprint for Treval AI NSE (Free Tier)
 services:
   - type: web
     name: treval-ai-nse
@@ -10,3 +11,5 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.11
     healthCheckPath: /health
+    autoDeploy: true  # 🔑 AUTO-DEPLOY ON PUSH TO main
+    gitBranch: main   # Deploy from 'main' branch
