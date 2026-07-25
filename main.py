@@ -65,9 +65,13 @@ class ExtendedDataPoint(BaseModel):
     volume: Optional[int] = Field(None, description="Trading volume (for historical data)")
     pe_ratio: Optional[float] = Field(None, description="P/E Ratio (for fundamentals)")
     dividend_yield: Optional[float] = Field(None, description="Dividend Yield (for fundamentals)")
+    market_cap: Optional[float] = Field(None, description="Market Cap (for fundamentals)")
+    eps: Optional[float] = Field(None, description="Earnings Per Share (for fundamentals)")
+    book_value: Optional[float] = Field(None, description="Book Value (for fundamentals)")
     news_title: Optional[str] = Field(None, description="News headline (for news data)")
     news_link: Optional[str] = Field(None, description="Link to the news article")
     news_publisher: Optional[str] = Field(None, description="Publisher of the news article")
+    news_published_date: Optional[str] = Field(None, description="Publication date of news")
     # Add more fields as needed by your specific API
 
 class ExtendedDataResponse(BaseModel):
@@ -224,95 +228,206 @@ def fetch_live_stocks() -> List[Stock]:
 
 
 # ----------------------------------------------------
-# NEW: Data Fetching from Subscribed API (Template Placeholder)
+# NEW: Data Fetching from Finance API (Yahoo Finance via RapidAPI)
 # ----------------------------------------------------
-def fetch_extended_data_from_subscribed_api(ticker: str, data_type: str = "historical") -> List[ExtendedDataPoint]:
+def fetch_extended_data_from_finance_api(ticker: str, data_type: str = "historical") -> List[ExtendedDataPoint]:
     """
-    Fetches extended data (e.g., historical prices, fundamentals, news) for a given ticker
-    from a subscribed API on RapidAPI (e.g., Yahoo Finance, Alpha Vantage).
-
-    This is a template function. You need to replace the placeholder logic with actual API calls
-    based on the specific API you subscribed to and its endpoints.
-
+    Fetches extended data from Finance API (Yahoo Finance powered) on RapidAPI.
+    
+    Supports:
+    - historical: Historical stock price data (OHLCV)
+    - fundamentals: Company fundamentals (P/E, dividend yield, market cap, EPS, book value)
+    - news: Latest news articles related to the stock
+    
     Args:
-        ticker: The stock ticker symbol (e.g., 'SCOM').
-        data_type: The type of data to fetch (e.g., 'historical', 'fundamentals', 'news').
-
+        ticker: Stock ticker symbol (e.g., 'SCOM.NSE' for NSE stocks)
+        data_type: Type of data ('historical', 'fundamentals', 'news')
+    
     Returns:
-        A list of ExtendedDataPoint objects containing the fetched data.
-        Returns an empty list if the call fails or no data is found.
+        List of ExtendedDataPoint objects
     """
-    # Retrieve the API key from environment variables (same key used for NSE API, assuming it's linked to your account)
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
-
+    
     if not rapidapi_key:
-        logger.error("❌ RAPIDAPI_KEY environment variable not set. Cannot fetch extended data.")
+        logger.error("❌ RAPIDAPI_KEY environment variable not set.")
+        return []
+    
+    # Finance API host on RapidAPI
+    rapidapi_host = "finance-api.p.rapidapi.com"
+    
+    try:
+        if data_type.lower() == "historical":
+            return _fetch_historical_data(ticker, rapidapi_key, rapidapi_host)
+        elif data_type.lower() == "fundamentals":
+            return _fetch_fundamentals_data(ticker, rapidapi_key, rapidapi_host)
+        elif data_type.lower() == "news":
+            return _fetch_news_data(ticker, rapidapi_key, rapidapi_host)
+        else:
+            logger.warning(f"Unknown data_type: {data_type}. Supported: historical, fundamentals, news")
+            return []
+    
+    except Exception as e:
+        logger.error(f"💥 Error fetching {data_type} data for {ticker}: {e}")
+        logger.exception("Full traceback:")
         return []
 
-    # --- PLACEHOLDER LOGIC: Replace this section with actual API call logic ---
-    # Example: If you subscribed to Yahoo Finance API
-    # rapidapi_host = "yahoo-finance160.p.rapidapi.com" # Example host
-    # url = f"https://{rapidapi_host}/history" # Example endpoint
-    # payload = {"stock": f"{ticker}.KE", "period": "1mo"} # Example payload
-    # headers = {
-    #     "content-type": "application/json",
-    #     "X-RapidAPI-Key": rapidapi_key,
-    #     "X-RapidAPI-Host": rapidapi_host
-    # }
-    # try:
-    #     response = requests.post(url, json=payload, headers=headers, timeout=15) # Or GET depending on API
-    #     response.raise_for_status()
-    #     raw_response = response.json()
-    #     # Process raw_response according to the specific API's structure
-    #     # e.g., extract 'historical' data from raw_response['chart']['result'][0]['indicators']['quote'][0]
-    #     processed_data = []
-    #     # ... parsing logic ...
-    #     for item in raw_response.get('data', []): # Adjust key based on API
-    #          # Map API fields to ExtendedDataPoint fields
-    #          point = ExtendedDataPoint(
-    #              ticker=ticker,
-    #              date=item.get('date'),
-    #              close_price=item.get('close'),
-    #              volume=item.get('volume'),
-    #              # ... map other fields ...
-    #          )
-    #          processed_data.append(point)
-    #     return processed_data
-    # except requests.exceptions.RequestException as e:
-    #     logger.error(f"📡 Network error during subscribed API call for {ticker} ({data_type}): {e}")
-    #     if hasattr(e, 'response') and e.response is not None:
-    #         logger.error(f"Response status code: {e.response.status_code}")
-    #         logger.error(f"Response text: {e.response.text[:200]}...")
-    # except Exception as e:
-    #     logger.error(f"💥 Unexpected error during subscribed API fetch for {ticker} ({data_type}): {e}")
-    #     logger.exception("Full traceback:")
-    # return []
 
-    # --- END PLACEHOLDER LOGIC ---
-
-    # --- CURRENT PLACEHOLDER RETURN (Remove this when implementing actual logic) ---
-    logger.warning(f"🔍 Fetching extended data for {ticker} ({data_type}) - Placeholder logic. Replace with actual API call.")
-    # Simulate some dummy data for demonstration - REMOVE THIS
-    if data_type == "historical":
-        return [
-            ExtendedDataPoint(ticker=ticker, date="2026-07-25", close_price=35.60, volume=707630),
-            ExtendedDataPoint(ticker=ticker, date="2026-07-24", close_price=35.55, volume=650000),
-            ExtendedDataPoint(ticker=ticker, date="2026-07-23", close_price=35.70, volume=800000),
-        ]
-    elif data_type == "fundamentals":
-        return [
-            ExtendedDataPoint(ticker=ticker, pe_ratio=14.5, dividend_yield=5.2),
-            ExtendedDataPoint(ticker=ticker, pe_ratio=14.2, dividend_yield=5.1),
-        ]
-    elif data_type == "news":
-        return [
-            ExtendedDataPoint(ticker=ticker, news_title="Safaricom Reports Strong Q2 Results", news_publisher="Business Daily", news_link="https://example.com/news/safaricom-q2"),
-            ExtendedDataPoint(ticker=ticker, news_title="Telecom Sector Outlook Positive", news_publisher="Capital FM", news_link="https://example.com/news/telecom-outlook"),
-        ]
-    else:
-        logger.info(f"No placeholder data for data_type: {data_type}")
+def _fetch_historical_data(ticker: str, rapidapi_key: str, rapidapi_host: str) -> List[ExtendedDataPoint]:
+    """Fetch historical OHLCV data from Finance API."""
+    # Ensure ticker has .NSE suffix for NSE stocks
+    if not ticker.endswith(".NSE"):
+        ticker = f"{ticker}.NSE"
+    
+    url = "https://finance-api.p.rapidapi.com/stock/v2/get-historical-data"
+    params = {
+        "symbol": ticker,
+        "period": "3mo"  # Last 3 months
+    }
+    headers = {
+        "X-RapidAPI-Key": rapidapi_key,
+        "X-RapidAPI-Host": rapidapi_host
+    }
+    
+    try:
+        logger.info(f"📊 Fetching historical data for {ticker}")
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        logger.debug(f"Historical data response keys: {data.keys() if isinstance(data, dict) else 'list'}")
+        
+        extended_points = []
+        
+        # Parse the response structure - adjust based on actual Finance API response
+        prices = data.get('prices', []) or data.get('data', [])
+        
+        for item in prices[:30]:  # Limit to last 30 records
+            try:
+                point = ExtendedDataPoint(
+                    ticker=ticker.replace(".NSE", ""),
+                    date=item.get('date') or item.get('timestamp'),
+                    open_price=safe_float(item.get('open')),
+                    high_price=safe_float(item.get('high')),
+                    low_price=safe_float(item.get('low')),
+                    close_price=safe_float(item.get('close') or item.get('adjclose')),
+                    volume=safe_int(item.get('volume'))
+                )
+                extended_points.append(point)
+            except Exception as e:
+                logger.warning(f"Skipping historical data point: {e}")
+                continue
+        
+        logger.info(f"✅ Fetched {len(extended_points)} historical data points for {ticker}")
+        return extended_points
+    
+    except requests.exceptions.RequestException as e:
+        logger.error(f"📡 Network error fetching historical data: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response: {e.response.text[:300]}")
         return []
-    # --- END PLACEHOLDER RETURN ---
+
+
+def _fetch_fundamentals_data(ticker: str, rapidapi_key: str, rapidapi_host: str) -> List[ExtendedDataPoint]:
+    """Fetch company fundamentals from Finance API."""
+    # Ensure ticker has .NSE suffix for NSE stocks
+    if not ticker.endswith(".NSE"):
+        ticker = f"{ticker}.NSE"
+    
+    url = "https://finance-api.p.rapidapi.com/stock/v2/get-profile"
+    params = {
+        "symbol": ticker
+    }
+    headers = {
+        "X-RapidAPI-Key": rapidapi_key,
+        "X-RapidAPI-Host": rapidapi_host
+    }
+    
+    try:
+        logger.info(f"📈 Fetching fundamentals for {ticker}")
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        logger.debug(f"Fundamentals response keys: {data.keys() if isinstance(data, dict) else 'list'}")
+        
+        # Parse fundamentals - adjust based on actual Finance API response
+        profile = data.get('profile', data)  # Could be nested under 'profile'
+        
+        fundamentals = ExtendedDataPoint(
+            ticker=ticker.replace(".NSE", ""),
+            pe_ratio=safe_float(profile.get('trailingPE') or profile.get('pe')),
+            dividend_yield=safe_float(profile.get('dividendYield')),
+            market_cap=safe_float(profile.get('marketCap')),
+            eps=safe_float(profile.get('trailingEps') or profile.get('eps')),
+            book_value=safe_float(profile.get('bookValue'))
+        )
+        
+        logger.info(f"✅ Fetched fundamentals for {ticker}")
+        return [fundamentals]
+    
+    except requests.exceptions.RequestException as e:
+        logger.error(f"📡 Network error fetching fundamentals: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response: {e.response.text[:300]}")
+        return []
+
+
+def _fetch_news_data(ticker: str, rapidapi_key: str, rapidapi_host: str) -> List[ExtendedDataPoint]:
+    """Fetch latest news articles from Finance API."""
+    # Remove .NSE suffix for news search
+    ticker_clean = ticker.replace(".NSE", "")
+    
+    url = "https://finance-api.p.rapidapi.com/news/v2/list"
+    params = {
+        "symbols": ticker_clean,
+        "limit": 10
+    }
+    headers = {
+        "X-RapidAPI-Key": rapidapi_key,
+        "X-RapidAPI-Host": rapidapi_host
+    }
+    
+    try:
+        logger.info(f"📰 Fetching news for {ticker_clean}")
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        
+        data = response.json()
+        logger.debug(f"News response keys: {data.keys() if isinstance(data, dict) else 'list'}")
+        
+        news_points = []
+        
+        # Parse news items - adjust based on actual Finance API response
+        items = data.get('items', data.get('news', []))
+        
+        for item in items:
+            try:
+                point = ExtendedDataPoint(
+                    ticker=ticker_clean,
+                    news_title=item.get('title') or item.get('headline'),
+                    news_link=item.get('link') or item.get('url'),
+                    news_publisher=item.get('publisher') or item.get('source'),
+                    news_published_date=item.get('published') or item.get('date')
+                )
+                news_points.append(point)
+            except Exception as e:
+                logger.warning(f"Skipping news item: {e}")
+                continue
+        
+        logger.info(f"✅ Fetched {len(news_points)} news articles for {ticker_clean}")
+        return news_points
+    
+    except requests.exceptions.RequestException as e:
+        logger.error(f"📡 Network error fetching news: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response: {e.response.text[:300]}")
+        return []
+
+
+# Backwards compatibility - keep old function name
+def fetch_extended_data_from_subscribed_api(ticker: str, data_type: str = "historical") -> List[ExtendedDataPoint]:
+    """Wrapper for backwards compatibility. Calls fetch_extended_data_from_finance_api."""
+    return fetch_extended_data_from_finance_api(ticker, data_type)
 
 
 # ----------------------------------------------------
@@ -323,17 +438,19 @@ async def root():
     return {
         "status": "online",
         "service": "NSE Kenya Live Data API v1.1",
-        "source": "RapidAPI (nairobi-stock-exchange-nse) & Subscribed APIs",
+        "source": "RapidAPI (nairobi-stock-exchange-nse) + Finance API (Yahoo Finance)",
         "cloud_hosted": True,
-        "python_version": platform.python_version(),  # Report the actual Python version being used
+        "python_version": platform.python_version(),
         "pydantic_version": "V2 (Compatible)",
         "timestamp": datetime.now().isoformat(),
-        "note": "Deployed on Render. Requires RAPIDAPI_KEY environment variable. Includes extended data endpoint.",
+        "note": "Deployed on Render. Requires RAPIDAPI_KEY environment variable.",
         "endpoints": {
             "live_stocks": "/api/v1/stocks",
             "stock_detail": "/api/v1/stock/{ticker}",
             "market_summary": "/api/v1/market-summary",
-            "extended_data": "/api/v1/extended-data/{ticker}?type=historical"  # Example usage
+            "extended_data_historical": "/api/v1/extended-data/SCOM?type=historical",
+            "extended_data_fundamentals": "/api/v1/extended-data/SCOM?type=fundamentals",
+            "extended_data_news": "/api/v1/extended-data/SCOM?type=news"
         }
     }
 
@@ -351,42 +468,40 @@ async def get_stock_details(ticker: str):
     ticker = ticker.upper()
     stocks = fetch_live_stocks()
     if not stocks:
-        # If the overall fetch failed, it's a system issue
         raise HTTPException(status_code=503, detail="Live stock data temporarily unavailable (API down/error).")
 
     for stock in stocks:
         if stock.ticker == ticker:
             return stock
-    # If the fetch worked but the specific ticker wasn't found
     raise HTTPException(status_code=404, detail=f"Stock with ticker '{ticker}' not found in current data.")
 
 # --- NEW ENDPOINT FOR EXTENDED DATA ---
 @app.get("/api/v1/extended-data/{ticker}", response_model=ExtendedDataResponse)
 async def get_extended_data(ticker: str, data_type: str = "historical"):
     """
-    Fetch extended data (e.g., historical prices, fundamentals, news) for a specific ticker
-    from a subscribed RapidAPI source.
-
-    Args:
-        ticker: The stock ticker symbol (e.g., 'SCOM').
-        data_type: The type of data to fetch (e.g., 'historical', 'fundamentals', 'news'). Defaults to 'historical'.
-
-    Returns:
-        ExtendedDataResponse object containing the requested data.
+    Fetch extended data (historical prices, fundamentals, news) for a specific ticker
+    from Finance API (Yahoo Finance powered).
+    
+    Query Parameters:
+    - ticker: Stock ticker symbol (e.g., SCOM, EQTY) - .NSE suffix added automatically
+    - type: Data type to fetch (historical, fundamentals, news). Default: historical
+    
+    Examples:
+    - /api/v1/extended-data/SCOM?type=historical
+    - /api/v1/extended-data/EQTY?type=fundamentals
+    - /api/v1/extended-data/SCOM?type=news
     """
     ticker = ticker.upper()
     logger.info(f"🔍 Requesting extended data for ticker: {ticker}, type: {data_type}")
-    extended_data_points = fetch_extended_data_from_subscribed_api(ticker, data_type.lower())
+    
+    extended_data_points = fetch_extended_data_from_finance_api(ticker, data_type.lower())
 
     if not extended_data_points:
         logger.warning(f"No extended data found for ticker: {ticker}, type: {data_type}")
-        # Consider returning an empty list within the response model or raising a 404
-        # For now, returning an empty list as per the model
-        # raise HTTPException(status_code=404, detail=f"Extended data ({data_type}) not found for ticker '{ticker}'.")
 
     return ExtendedDataResponse(
         ticker=ticker,
-        source="Subscribed API Placeholder",  # Replace with actual source name when implemented
+        source="Finance API (Yahoo Finance)",
         data_type=data_type.lower(),
         data=extended_data_points
     )
