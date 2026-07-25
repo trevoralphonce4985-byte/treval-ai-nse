@@ -7,6 +7,7 @@ from typing import List, Optional
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+# Import BaseModel, Field, and validator from Pydantic V1
 from pydantic import BaseModel, Field, validator
 
 # ----------------------------------------------------
@@ -33,7 +34,7 @@ app.add_middleware(
 )
 
 # ----------------------------------------------------
-# Data Models (Pydantic V1)
+# Data Models (Pydantic V1 Compatible)
 # ----------------------------------------------------
 class Stock(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol (e.g., SCOM, EQTY)")
@@ -42,17 +43,39 @@ class Stock(BaseModel):
     change: float = Field(0.0, description="Absolute price change")
     change_percent: float = Field(0.0, description="Percentage price change")
     volume: int = Field(0, description="Trading volume")
-    dividend_yield: Optional[float] = Field(None, ge=0, le=100, description="Annual dividend yield (%)")
-    pe_ratio: Optional[float] = Field(None, gt=0, description="Price-to-Earnings ratio")
-    market_cap: Optional[float] = Field(None, gt=0, description="Market capitalization in millions/billions KES")
+    dividend_yield: Optional[float] = Field(None, description="Annual dividend yield (%)")
+    pe_ratio: Optional[float] = Field(None, description="Price-to-Earnings ratio")
+    market_cap: Optional[float] = Field(None, description="Market capitalization in millions/billions KES")
     recommendation: str = Field("HOLD", description="Basic recommendation (e.g., HOLD)")
 
-    # Pydantic V1 validators for fields that need positive values
-    @validator('price', 'volume')
-    def value_must_be_positive(cls, v, values, field):
-        if field.name in ['price', 'volume'] and v <= 0:
-            raise ValueError(f'{field.name} must be greater than 0')
+    # Pydantic V1 validators for fields that need positive values (> 0) or non-negative (>= 0)
+    @validator('price')
+    def price_must_be_positive(cls, v):
+        if v <= 0:
+            raise ValueError('price must be greater than 0')
         return v
+
+    @validator('volume')
+    def volume_must_be_non_negative(cls, v):
+        if v < 0:
+            raise ValueError('volume must be 0 or greater')
+        return v
+
+    # Optional: Validator for optional fields if they are provided, they must be > 0
+    @validator('pe_ratio', 'market_cap', 'dividend_yield', pre=True)
+    def value_must_be_positive_if_present(cls, v):
+        # If the value is provided (not None or empty string) and is <= 0, raise an error
+        if v is not None:
+            try:
+                num_v = float(v)
+                if num_v <= 0:
+                    raise ValueError(f'This value must be greater than 0 if provided')
+            except (TypeError, ValueError):
+                 # If it's not a number, let it pass through or handle differently if needed
+                 # For now, just return the original value if it can't be converted
+                 pass
+        return v
+
 
 # ----------------------------------------------------
 # Utility Functions (Kept for potential future use or data cleaning)
@@ -147,7 +170,7 @@ def fetch_nse_stocks_from_rapidapi() -> List[Stock]:
 
             # Fields like Dividend Yield, P/E, Market Cap might not be available in the free/basic API tier
             dividend_yield = safe_float(item.get('dividend_yield')) if item.get('dividend_yield') else None
-            pe_ratio = safe_float(item.get('pe_ratio') or item.get('pe')) if item.get('pe_ratio') or item.get('pe') else None
+            pe_ratio = safe_float(item.get('pe_ratio') or item.get('pe')) if (item.get('pe_ratio') or item.get('pe')) else None
             market_cap_raw = item.get('market_cap') or item.get('mkt_cap')
             market_cap = safe_float(market_cap_raw) if market_cap_raw else None
 
