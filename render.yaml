@@ -1,15 +1,11 @@
-# render.yaml
 services:
   - type: web
     name: treval-ai-nse
     env: python
-    region: frankfurt # Or your preferred region
-    plan: free # Use the free tier
+    region: frankfurt
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.14.3 # Match the version in the logs
     healthCheckPath: /health
     autoDeploy: true
     gitBranch: main
