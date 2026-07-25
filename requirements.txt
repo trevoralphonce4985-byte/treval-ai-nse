@@ -1,6 +1,5 @@
 fastapi==0.109.2
 uvicorn[standard]==0.29.0
-pydantic==2.7.4
-pydantic-settings==2.4.0  # Often useful alongside pydantic
+pydantic==1.10.19
 requests==2.32.3
 loguru==0.7.2
