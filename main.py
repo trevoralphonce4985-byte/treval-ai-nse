@@ -3,11 +3,13 @@ import os
 import logging
 import re
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
+import platform # Import platform to get the actual Python version
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, validator # Import validator
+# Import for Pydantic v2
+from pydantic import BaseModel, Field
 
 # ----------------------------------------------------
 # Logging Configuration
@@ -33,51 +35,29 @@ app.add_middleware(
 )
 
 # ----------------------------------------------------
-# Data Models (Strictly Pydantic V1 Compatible)
+# Data Models (Pydantic V2 Compatible)
 # ----------------------------------------------------
 class Stock(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol (e.g., SCOM, EQTY)")
     company: str = Field(..., description="Full company name")
-    price: float = Field(..., description="Current stock price in KES") # Must be provided and > 0
+    price: float = Field(..., gt=0, description="Current stock price in KES") # Pydantic v2 allows gt, le, etc. in Field
     change: float = Field(0.0, description="Absolute price change")
     change_percent: float = Field(0.0, description="Percentage price change")
-    volume: int = Field(0, description="Trading volume") # Default 0
-    # Removed constraints like ge, le, gt from Field(...) itself for v1 compatibility
-    dividend_yield: Optional[float] = Field(None, description="Annual dividend yield (%)")
-    pe_ratio: Optional[float] = Field(None, description="Price-to-Earnings ratio")
-    market_cap: Optional[float] = Field(None, description="Market capitalization in millions/billions KES")
+    volume: int = Field(0, ge=0, description="Trading volume")
+    dividend_yield: Optional[float] = Field(None, ge=0, le=100, description="Annual dividend yield (%)")
+    pe_ratio: Optional[float] = Field(None, gt=0, description="Price-to-Earnings ratio")
+    market_cap: Optional[float] = Field(None, gt=0, description="Market capitalization in millions/billions KES")
     recommendation: str = Field("HOLD", description="Basic recommendation (e.g., HOLD)")
-
-    # Pydantic V1 validators
-    @validator('price')
-    def price_must_be_positive(cls, v):
-        if v <= 0:
-            raise ValueError('price must be greater than 0')
-        return v
-
-    @validator('volume')
-    def volume_must_be_non_negative(cls, v):
-        if v < 0:
-            raise ValueError('volume must be 0 or greater')
-        return v
-
-    # Optional validators for optional fields, only check if value is present and numeric
-    @validator('pe_ratio', 'market_cap', 'dividend_yield')
-    def value_must_be_positive_if_present(cls, v):
-        if v is not None and isinstance(v, (int, float)):
-            if v <= 0:
-                raise ValueError('This value must be greater than 0 if provided and numeric')
-        return v # Return the value as is, allowing None or non-numeric values to pass
-
 
 # ----------------------------------------------------
 # Utility Functions
 # ----------------------------------------------------
-def safe_float(s, default=0.0):
+def safe_float(s: str, default: float = 0.0) -> float:
     """Safely convert a string to float."""
     if s is None:
         return default
     try:
+        # Remove common non-numeric characters except minus and decimal point
         cleaned = re.sub(r'[^\d.-]', '', str(s))
         if cleaned in ['', '-', '.', '-.']:
              return default
@@ -86,11 +66,12 @@ def safe_float(s, default=0.0):
         logger.warning(f"Could not convert '{s}' to float, returning {default}")
         return default
 
-def safe_int(s, default=0):
+def safe_int(s: str, default: int = 0) -> int:
     """Safely convert a string to int."""
     if s is None:
         return default
     try:
+        # Remove common non-numeric characters except minus and digits
         cleaned = re.sub(r'[^\d-]', '', str(s))
         if cleaned in ['', '-']:
              return default
@@ -105,8 +86,9 @@ def safe_int(s, default=0):
 def fetch_nse_stocks_from_rapidapi() -> List[Stock]:
     """
     Fetches live stock data from the RapidAPI NSE endpoint.
-    Uses Pydantic V1 compatible logic.
+    Uses Pydantic V2 compatible logic.
     """
+    # Retrieve the API key from environment variables
     rapidapi_key = os.getenv("RAPIDAPI_KEY")
     rapidapi_host = "nairobi-stock-exchange-nse.p.rapidapi.com"
 
@@ -117,52 +99,60 @@ def fetch_nse_stocks_from_rapidapi() -> List[Stock]:
     url = f"https://{rapidapi_host}/stocks"
     headers = {
         "Content-Type": "application/json",
-        "X-RapidAPI-Key": rapidapi_key,
-        "X-RapidAPI-Host": rapidapi_host
+        "X-RapidAPI-Key": rapidapi_key,  # Use the key from environment
+        "X-RapidAPI-Host": rapidapi_host # Use the host from environment
     }
 
     try:
         logger.info(f"📡 Fetching live data from RapidAPI: {url.split('/')[2]}")
         response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+        response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
 
         raw_data = response.json()
-        logger.debug(f"Raw API response type: {type(raw_data)}, length: {len(raw_data) if isinstance(raw_data, (list, str)) else 'N/A'}")
+        logger.debug(f"Raw API response type: {type(raw_data)}, length/data: {len(raw_data) if isinstance(raw_data, (list, str)) else 'N/A'}")
 
         stocks = []
+        # Assuming the API returns a list of stock objects under a key like 'data' or directly as a list
+        # Adjust this based on the *actual* structure of your RapidAPI response
         stock_list = raw_data if isinstance(raw_data, list) else raw_data.get('data', []) or raw_data.get('stocks', [])
 
         for item in stock_list:
+            # Map fields from the API response to your Stock model
+            # Adjust 'symbol', 'current_price', etc. to match the actual keys in your API response
             ticker = item.get('symbol') or item.get('ticker') or item.get('code')
             if not ticker:
                 logger.warning(f"Skipping item due to missing ticker/symbol/code: {item}")
-                continue
+                continue # Skip items without a primary identifier
 
             price_raw = item.get('price') or item.get('current_price') or item.get('close_price')
             price = safe_float(price_raw)
             if price <= 0:
                 logger.warning(f"Skipping {ticker} due to invalid/missing price: {price_raw}")
-                continue
+                continue # Skip items with no valid price
 
-            change_raw = item.get('change', 0.0)
-            change = safe_float(change_raw)
+            # Try to get other fields, defaulting gracefully
+            change_raw = item.get('change') # Absolute change
+            change = safe_float(change_raw) if change_raw is not None else 0.0
 
             change_pct_raw = item.get('change_percent') or item.get('chg_pct') or item.get('percent_change')
-            change_percent = safe_float(change_pct_raw)
+            change_percent = safe_float(change_pct_raw) if change_pct_raw is not None else 0.0
 
             volume_raw = item.get('volume') or item.get('vol') or item.get('traded_volume')
-            volume = safe_int(volume_raw)
+            volume = safe_int(volume_raw) if volume_raw is not None else 0
 
-            dividend_yield = safe_float(item.get('dividend_yield'))
-            pe_ratio = safe_float(item.get('pe_ratio') or item.get('pe'))
+            # Fields like Dividend Yield, P/E, Market Cap might not be available in the free/basic API tier
+            dividend_yield = safe_float(item.get('dividend_yield')) if item.get('dividend_yield') else None
+            pe_ratio = safe_float(item.get('pe_ratio') or item.get('pe')) if (item.get('pe_ratio') or item.get('pe')) else None
             market_cap_raw = item.get('market_cap') or item.get('mkt_cap')
-            market_cap = safe_float(market_cap_raw)
+            market_cap = safe_float(market_cap_raw) if market_cap_raw else None
 
+            # Derive company name if not provided explicitly
             company = item.get('company') or item.get('name') or item.get('issuer_name') or f"{ticker} PLC"
 
             try:
+                # Create Stock object - Pydantic V2 will validate based on Field constraints
                 stock_obj = Stock(
-                    ticker=ticker.upper(),
+                    ticker=ticker.upper(), # Ensure uppercase for consistency
                     company=company,
                     price=price,
                     change=change,
@@ -171,12 +161,12 @@ def fetch_nse_stocks_from_rapidapi() -> List[Stock]:
                     dividend_yield=dividend_yield,
                     pe_ratio=pe_ratio,
                     market_cap=market_cap,
-                    recommendation="HOLD"
+                    recommendation="HOLD" # Default, can be calculated later by business logic if needed
                 )
                 stocks.append(stock_obj)
-            except ValueError as ve:
+            except Exception as ve: # Catch validation errors from Pydantic V2
                  logger.error(f"Validation error for item {item}: {ve}")
-                 continue
+                 continue # Skip this item if it fails validation
 
         logger.info(f"✅ Successfully fetched and processed {len(stocks)} stocks from RapidAPI.")
         return stocks
@@ -188,14 +178,17 @@ def fetch_nse_stocks_from_rapidapi() -> List[Stock]:
             logger.error(f"Response text (first 200 chars): {e.response.text[:200]}...")
     except Exception as e:
         logger.error(f"💥 Unexpected error during RapidAPI fetch: {e}")
-        logger.exception("Full traceback:")
+        logger.exception("Full traceback:") # Log the full stack trace for debugging
 
     logger.warning("📡 RapidAPI call failed or returned no valid data matching the model. Returning empty list.")
-    return []
+    return [] # Return empty list on failure
 
 
 def fetch_live_stocks() -> List[Stock]:
-    """Wrapper function to fetch live data."""
+    """
+    Wrapper function to fetch live data. Currently uses the RapidAPI source.
+    Can be extended to include caching or fallbacks later.
+    """
     return fetch_nse_stocks_from_rapidapi()
 
 # ----------------------------------------------------
@@ -208,8 +201,8 @@ async def root():
         "service": "NSE Kenya Live Data API v1.0",
         "source": "RapidAPI (nairobi-stock-exchange-nse)",
         "cloud_hosted": True,
-        "python_version": "3.14.3 (Render default)",
-        "pydantic_version": "V1 (Compatible)",
+        "python_version": platform.python_version(), # Report the actual Python version being used
+        "pydantic_version": "V2 (Compatible)",
         "timestamp": datetime.now().isoformat(),
         "note": "Deployed on Render. Requires RAPIDAPI_KEY environment variable to be set."
     }
@@ -224,15 +217,17 @@ async def get_all_stocks():
 
 @app.get("/api/v1/stock/{ticker}")
 async def get_stock_details(ticker: str):
-    """Get details for a specific stock by ticker symbol."""
+    """Get details for a specific stock by ticker symbol from RapidAPI data."""
     ticker = ticker.upper()
     stocks = fetch_live_stocks()
     if not stocks:
+         # If the overall fetch failed, it's a system issue
          raise HTTPException(status_code=503, detail="Live stock data temporarily unavailable (API down/error).")
 
     for stock in stocks:
         if stock.ticker == ticker:
             return stock
+    # If the fetch worked but the specific ticker wasn't found
     raise HTTPException(status_code=404, detail=f"Stock with ticker '{ticker}' not found in current data.")
 
 @app.get("/health")
@@ -240,9 +235,10 @@ async def health_check():
     """Simple health check endpoint."""
     return {"status": "healthy", "time": datetime.now().isoformat()}
 
+# --- Optional: Example endpoint for market summary ---
 @app.get("/api/v1/market-summary")
 async def market_summary():
-    """Provide a high-level summary of the market."""
+    """Provide a high-level summary of the market based on fetched stocks."""
     stocks = fetch_live_stocks()
     if not stocks:
         return {"message": "No live stock data available for summary (API down/error)."}
