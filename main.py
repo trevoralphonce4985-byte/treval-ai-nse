@@ -39,16 +39,18 @@ app.add_middleware(
 class Stock(BaseModel):
     ticker: str = Field(..., description="Stock ticker symbol (e.g., SCOM, EQTY)")
     company: str = Field(..., description="Full company name")
-    price: float = Field(..., description="Current stock price in KES")
+    price: float = Field(..., description="Current stock price in KES") # No default, must be provided and > 0
     change: float = Field(0.0, description="Absolute price change")
     change_percent: float = Field(0.0, description="Percentage price change")
-    volume: int = Field(0, description="Trading volume")
+    volume: int = Field(0, description="Trading volume") # Default 0, can be 0 or greater
+    # --- CORRECTED FIELD DEFINITIONS FOR PYDANTIC V1 ---
+    # Removed ge, le, gt constraints from Field(...) itself
     dividend_yield: Optional[float] = Field(None, description="Annual dividend yield (%)")
     pe_ratio: Optional[float] = Field(None, description="Price-to-Earnings ratio")
     market_cap: Optional[float] = Field(None, description="Market capitalization in millions/billions KES")
     recommendation: str = Field("HOLD", description="Basic recommendation (e.g., HOLD)")
 
-    # Pydantic V1 validators for fields that need positive values (> 0) or non-negative (>= 0)
+    # Pydantic V1 validators for fields that need specific checks
     @validator('price')
     def price_must_be_positive(cls, v):
         if v <= 0:
@@ -62,17 +64,20 @@ class Stock(BaseModel):
         return v
 
     # Optional: Validator for optional fields if they are provided, they must be > 0
+    # Uses pre=True to run *before* type coercion if necessary
     @validator('pe_ratio', 'market_cap', 'dividend_yield', pre=True)
     def value_must_be_positive_if_present(cls, v):
-        # If the value is provided (not None or empty string) and is <= 0, raise an error
+        # If the value is provided (not None) and is a number, check if it's > 0
         if v is not None:
+            # Attempt to convert to float to check if it's a numeric value
             try:
                 num_v = float(v)
                 if num_v <= 0:
-                    raise ValueError(f'This value must be greater than 0 if provided')
+                    raise ValueError('This value must be greater than 0 if provided')
             except (TypeError, ValueError):
-                 # If it's not a number, let it pass through or handle differently if needed
-                 # For now, just return the original value if it can't be converted
+                 # If conversion fails, let it pass through or handle differently
+                 # For now, just return the original value if it's not a valid number
+                 # This validator only enforces the rule if it's a number.
                  pass
         return v
 
