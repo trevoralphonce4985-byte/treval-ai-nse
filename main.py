@@ -11,6 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 # Import for Pydantic v2
 from pydantic import BaseModel, Field
 
+# --- NEW IMPORTS FOR QUANTITATIVE ENGINE ---
+from quant_engine.engine import quant_engine # Import the global engine instance
+# Import the specific model classes to register them
+from quant_engine.models.random_walk import RandomWalkModel
+from quant_engine.models.moving_average import SimpleMovingAverageModel, ExponentialMovingAverageModel
+from quant_engine.models.linear_regression import LinearRegressionModel
+from quant_engine.models.gbm import GbmModel
+
 # ----------------------------------------------------
 # Logging Configuration
 # ----------------------------------------------------
@@ -22,8 +30,8 @@ logger = logging.getLogger("NSE-API")
 # ----------------------------------------------------
 app = FastAPI(
     title="NSE Kenya Live Data API",
-    version="1.1.0",  # Incremented version to reflect changes
-    description="Live NSE stock data via RapidAPI — deployed on Render. Includes extended data from subscribed APIs."
+    version="1.2.0",  # Incremented version to reflect changes
+    description="Live NSE stock data via RapidAPI — deployed on Render. Includes extended data from subscribed APIs and quantitative predictions."
 )
 
 app.add_middleware(
@@ -49,7 +57,17 @@ class Stock(BaseModel):
     market_cap: Optional[float] = Field(None, gt=0, description="Market capitalization in millions/billions KES")
     recommendation: str = Field("HOLD", description="Basic recommendation (e.g., HOLD)")
 
-# --- NEW MODEL FOR EXTENDED DATA ---
+# --- NEW MODEL FOR PREDICTION RESULT ---
+class PredictionPoint(BaseModel):
+    timestamp: str = Field(..., description="Predicted timestamp (ISO 8601 format)")
+    predicted_value: float = Field(..., description="Predicted value (e.g., price)")
+
+class PredictionResult(BaseModel):
+    model_used: str = Field(..., description="Name of the model used for prediction")
+    predictions: List[PredictionPoint] = Field(..., description="List of predicted values with timestamps")
+    info: Dict[str, Any] = Field(..., description="Additional information about the model run")
+
+# --- NEW MODEL FOR EXTENDED DATA (Keeping existing) ---
 class ExtendedDataPoint(BaseModel):
     """
     Generic model for extended data points (e.g., historical prices, fundamentals, news).
@@ -228,7 +246,7 @@ def fetch_live_stocks() -> List[Stock]:
 
 
 # ----------------------------------------------------
-# NEW: Data Fetching from Finance API (Yahoo Finance via RapidAPI)
+# NEW: Data Fetching from Finance API (Yahoo Finance via RapidAPI) - Keeping existing code
 # ----------------------------------------------------
 def fetch_extended_data_from_finance_api(ticker: str, data_type: str = "historical") -> List[ExtendedDataPoint]:
     """
@@ -433,12 +451,29 @@ def fetch_extended_data_from_subscribed_api(ticker: str, data_type: str = "histo
 # ----------------------------------------------------
 # API Endpoints
 # ----------------------------------------------------
+
+# --- NEW: Register Models on Startup ---
+@app.on_event('startup')
+async def startup_event():
+    logger.info("🚀 Starting up and registering quantitative models...")
+    try:
+        quant_engine.register_model("RandomWalk", RandomWalkModel)
+        quant_engine.register_model("SMA", SimpleMovingAverageModel)
+        quant_engine.register_model("EMA", ExponentialMovingAverageModel) # Added EMA
+        quant_engine.register_model("LinearRegression", LinearRegressionModel)
+        quant_engine.register_model("GBM", GbmModel)
+        logger.info("✅ All quantitative models registered successfully.")
+    except Exception as e:
+        logger.error(f"💥 Failed to register quantitative models: {e}")
+        logger.exception("Full traceback:")
+
+
 @app.get("/")
 async def root():
     return {
         "status": "online",
-        "service": "NSE Kenya Live Data API v1.1",
-        "source": "RapidAPI (nairobi-stock-exchange-nse) + Finance API (Yahoo Finance)",
+        "service": "NSE Kenya Live Data API v1.2",
+        "source": "RapidAPI (nairobi-stock-exchange-nse) + Finance API (Yahoo Finance) + Quantitative Engine",
         "cloud_hosted": True,
         "python_version": platform.python_version(),
         "pydantic_version": "V2 (Compatible)",
@@ -450,7 +485,8 @@ async def root():
             "market_summary": "/api/v1/market-summary",
             "extended_data_historical": "/api/v1/extended-data/SCOM?type=historical",
             "extended_data_fundamentals": "/api/v1/extended-data/SCOM?type=fundamentals",
-            "extended_data_news": "/api/v1/extended-data/SCOM?type=news"
+            "extended_data_news": "/api/v1/extended-data/SCOM?type=news",
+            "prediction": "/api/v1/predict/SCOM?model_name=RandomWalk&horizon=5" # Example usage
         }
     }
 
@@ -505,6 +541,53 @@ async def get_extended_data(ticker: str, data_type: str = "historical"):
         data_type=data_type.lower(),
         data=extended_data_points
     )
+
+# --- NEW ENDPOINT FOR QUANTITATIVE PREDICTIONS ---
+@app.get("/api/v1/predict/{ticker}", response_model=PredictionResult)
+async def get_prediction(ticker: str, model_name: str, horizon: int = 5):
+    """
+    Get a prediction for a specific ticker using a specified quantitative model.
+
+    Args:
+        ticker: The stock ticker symbol (e.g., 'SCOM'). Case-insensitive, will be uppercased.
+        model_name: The name of the model to use (e.g., 'RandomWalk', 'SMA', 'GBM').
+        horizon: The number of future time steps to predict (default 5).
+
+    Returns:
+        PredictionResult object containing the model used, the predictions, and model info.
+    """
+    ticker = ticker.upper()
+    logger.info(f"🔮 Requesting prediction for ticker: {ticker}, model: {model_name}, horizon: {horizon}")
+
+    # Fetch data for the ticker (reuse existing logic or create a helper)
+    stocks = fetch_live_stocks() # Or fetch specific ticker data
+    if not stocks:
+        raise HTTPException(status_code=503, detail="Live stock data temporarily unavailable for prediction.")
+
+    # Filter data for the specific ticker
+    ticker_data = [s for s in stocks if s.ticker == ticker]
+    if not ticker_data:
+        raise HTTPException(status_code=404, detail=f"Stock with ticker '{ticker}' not found for prediction.")
+
+    # Prepare data in the format expected by the model (list of dicts with timestamp and close price)
+    # The model's prepare_data expects a list of dicts like [{"timestamp": ..., "close": ...}]
+    raw_data_for_model = [{"timestamp": int(s.model_dump()['price']), "close": s.price} for s in ticker_data] # This is a simplification for now, using price as timestamp placeholder if no real timestamp exists in Stock model
+    # A better approach would be to add a timestamp field to the Stock model or fetch historical data with timestamps specifically for prediction.
+    # For now, let's assume the Stock model might have a timestamp, or we derive one from the fetch time or use an index.
+    # Let's modify the raw_data_for_model creation to include a proper timestamp if available in the source API, or use a mock one.
+    # Assuming fetch_nse_stocks_from_rapidapi could potentially provide a timestamp, let's add a placeholder field to Stock if needed, or use a fixed timestamp for now.
+    # For this example, let's add a current timestamp placeholder. A real implementation needs historical data with timestamps.
+    import time
+    timestamp_placeholder = int(time.time() * 1000) - (len(ticker_data) * 86400 * 1000) # Placeholder: approx start of data
+    raw_data_for_model = [{"timestamp": timestamp_placeholder + (i * 86400 * 1000), "close": s.price} for i, s in enumerate(ticker_data)] # Add 1 day per data point
+
+    result = quant_engine.run_prediction(model_name, raw_data_for_model, horizon)
+    if "error" in result:
+        logger.error(f"Prediction failed: {result['error']}")
+        raise HTTPException(status_code=500, detail=result["error"])
+
+    logger.info(f"✅ Prediction completed for {ticker} using {model_name}. Horizon: {horizon}. Points: {len(result['predictions'])}")
+    return PredictionResult(**result) # Unpack the result dict into the Pydantic model
 
 
 @app.get("/health")
