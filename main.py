@@ -1,4 +1,5 @@
 # main.py (v2.1.2 - FIX: Volume Decimal Shift, Change Calculation & Multi-Key Parsing)
+# PLUS: WhatsApp Notification Integration (v2.1.3)
 import os
 import logging
 import re
@@ -16,6 +17,11 @@ import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
 import hashlib
+# --- NEW: Import for WhatsApp Scheduling ---
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.cron import CronTrigger
+import atexit # For scheduler cleanup
 
 # --- IMPORT QUANTITATIVE ENGINE ---
 try:
@@ -42,8 +48,8 @@ logger = logging.getLogger("NSE-API")
 # ----------------------------------------------------
 app = FastAPI(
     title="Treval AI NSE Live Data API",
-    version="2.1.2",
-    description="Live NSE stock data powered by NSE Scraper API (RapidAPI) — deployed on Render. Features corrected volume scaling & absolute price change calculations."
+    version="2.1.3", # Updated version
+    description="Live NSE stock data powered by NSE Scraper API (RapidAPI) — deployed on Render. Features corrected volume scaling & absolute price change calculations. Includes WhatsApp notifications for admin."
 )
 
 app.add_middleware(
@@ -267,6 +273,73 @@ def fetch_stock_data_for_ticker(ticker: str) -> Optional[Stock]:
             return stock
     return None
 
+# --- NEW: WhatsApp Test Function ---
+async def send_whatsapp_test_message():
+    """
+    Sends a test message using the WhatsApp API from RapidAPI.
+    This function will be scheduled by APScheduler.
+    """
+    rapidapi_key = os.getenv("WHATSAPP_RAPIDAPI_KEY") # Get the key from environment variables
+    instance_unique_key = os.getenv("WHATSAPP_INSTANCE_UNIQUE_KEY") # Get the instance key
+    admin_phone_number = "+254797780877" # Your admin number
+
+    if not rapidapi_key:
+        logger.error("❌ 'WHATSAPP_RAPIDAPI_KEY' environment variable not set. Cannot send message.")
+        return
+
+    if not instance_unique_key:
+        logger.error("❌ 'WHATSAPP_INSTANCE_UNIQUE_KEY' environment variable not set. Cannot send message. Link your WhatsApp account first.")
+        return
+
+    url = "https://whatsapp-api98.p.rapidapi.com/send-whatsapp-message"
+    payload = {
+        "account": instance_unique_key,  # The unique identifier for your linked WhatsApp number
+        "recipient": admin_phone_number,
+        "message": f"Hello Admin, this is a test message from Treval AI NSE App. Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.",
+        "type": "text" # Specify the message type
+    }
+    headers = {
+        "x-rapidapi-key": rapidapi_key, # Use the key provided by RapidAPI
+        "x-rapidapi-host": "whatsapp-api98.p.rapidapi.com", # Use the host from the API docs
+        "Content-Type": "application/json"
+    }
+
+    try:
+        logger.info(f"Attempting to send WhatsApp message to {admin_phone_number}...")
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status() # Raises an exception for bad status codes (4xx or 5xx)
+
+        result = response.json()
+        logger.info(f"✅ WhatsApp API Response: {result}")
+        # Check the response structure for success indication (adjust based on actual API response)
+        # Example: if result.get('success'):
+        #             logger.info("✅ Message sent successfully!")
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"❌ Failed to send WhatsApp message: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"   Status Code: {e.response.status_code}")
+            logger.error(f"   Response Text: {e.response.text}")
+    except Exception as e:
+        logger.error(f"💥 Unexpected error sending WhatsApp message: {e}")
+
+# --- NEW: Scheduler Setup ---
+scheduler = AsyncIOScheduler()
+
+# 1. Schedule a single test message 10 minutes from now
+start_time_single = datetime.now() + timedelta(minutes=10)
+scheduler.add_job(send_whatsapp_test_message, DateTrigger(run_date=start_time_single), id='test_msg_10_min')
+
+# 2. Schedule recurring messages every hour starting tomorrow at 8 AM EAT (5 AM UTC)
+#    Cron: At minute 0 past hour 5 (5 AM UTC = 8 AM EAT)
+scheduler.add_job(send_whatsapp_test_message, CronTrigger(minute=0, hour=5, timezone='UTC'), id='daily_recurring_msgs', start_date=datetime.now().replace(hour=5, minute=0, second=0, microsecond=0) + timedelta(days=1))
+
+scheduler.start()
+logger.info("⏰ Background scheduler started for WhatsApp test messages.")
+
+# Shut down the scheduler when exiting the app
+atexit.register(lambda: scheduler.shutdown())
+
 # ----------------------------------------------------
 # API Endpoints
 # ----------------------------------------------------
@@ -274,10 +347,13 @@ def fetch_stock_data_for_ticker(ticker: str) -> Optional[Stock]:
 async def root():
     return {
         "status": "online",
-        "service": "Treval AI NSE Live Data API v2.1.2",
+        "service": "Treval AI NSE Live Data API v2.1.3",
         "source": "NSE Scraper API (RapidAPI)",
+        "features": ["Live Data", "Volume/Change Correction", "WhatsApp Notifications"],
         "cloud_hosted": True,
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.now().isoformat(),
+        "scheduled_whatsapp_test": f"A test message is scheduled for {datetime.now() + timedelta(minutes=10)}",
+        "scheduled_whatsapp_daily": "Messages are scheduled daily at 8 AM EAT (5 AM UTC)"
     }
 
 @app.get("/api/v1/stocks")
@@ -318,3 +394,5 @@ async def market_summary():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "time": datetime.now().isoformat()}
+
+# --- END OF FILE ---
