@@ -1,4 +1,4 @@
-# main.py
+# main.py (v2.1.0 - MODIFIED to use NSE API)
 import os
 import logging
 import re
@@ -42,8 +42,8 @@ logger = logging.getLogger("NSE-API")
 # ----------------------------------------------------
 app = FastAPI(
     title="Treval AI NSE Live Data API",
-    version="2.1.0",  # Updated version
-    description="Live NSE stock data powered by Yahoo Finance (RapidAPI) — deployed on Render. Includes prediction caching and rate limiting."
+    version="2.1.1",  # Updated version to reflect NSE API change
+    description="Live NSE stock data powered by NSE Scraper API (RapidAPI) — deployed on Render. Includes prediction caching and rate limiting."
 )
 
 app.add_middleware(
@@ -58,15 +58,16 @@ app.add_middleware(
 # Data Models (Pydantic V2 Compatible)
 # ----------------------------------------------------
 class Stock(BaseModel):
-    ticker: str = Field(..., description="Stock ticker symbol (e.g., SCOM.NSE)")
+    ticker: str = Field(..., description="Stock ticker symbol (e.g., SCOM)")
     company: str = Field(..., description="Full company name")
     price: float = Field(..., gt=0, description="Current stock price")
     change: float = Field(0.0, description="Absolute price change")
     change_percent: float = Field(0.0, description="Percentage price change")
     volume: int = Field(0, ge=0, description="Trading volume")
-    dividend_yield: Optional[float] = Field(None, ge=0, le=100, description="Annual dividend yield (%)")
-    pe_ratio: Optional[float] = Field(None, gt=0, description="Price-to-Earnings ratio")
-    market_cap: Optional[float] = Field(None, gt=0, description="Market capitalization")
+    # Dividend yield, P/E, Market Cap might not be available from the NSE Scraper API directly
+    # dividend_yield: Optional[float] = Field(None, ge=0, le=100, description="Annual dividend yield (%)")
+    # pe_ratio: Optional[float] = Field(None, gt=0, description="Price-to-Earnings ratio")
+    # market_cap: Optional[float] = Field(None, gt=0, description="Market capitalization")
     recommendation: str = Field("HOLD", description="Basic recommendation")
 
 class PredictionPoint(BaseModel):
@@ -126,12 +127,35 @@ def safe_int(s: str, default: int = 0) -> int:
         logger.warning(f"Could not convert '{s}' to int, returning {default}")
         return default
 
+def parse_change_string(change_str: str) -> tuple[float, float]:
+    """
+    Parses a change string like "+2.50 (+5.82%)" or "-0.50 (-1.71%)".
+    Returns (change_amount, change_percentage).
+    """
+    if not change_str:
+        return 0.0, 0.0
+
+    import re
+    # Match the first number (change amount) and the number inside parentheses (change percentage)
+    match = re.search(r'([+-]?\d+\.?\d*)\s*\(\s*([+-]?\d+\.?\d*)%\s*\)', change_str)
+    if match:
+        change_amount = float(match.group(1))
+        change_percent = float(match.group(2))
+        return change_amount, change_percent
+    else:
+        logger.warning(f"Could not parse change string: {change_str}")
+        # If parsing fails, try to extract percentage only if format is like "+1.28%"
+        pct_match = re.search(r'([+-]?\d+\.?\d*)%', change_str)
+        if pct_match:
+            return 0.0, float(pct_match.group(1)) # Assume 0 change amount if only % is found
+        return 0.0, 0.0
+
 # ----------------------------------------------------
 # Caching Mechanism (Critical for Rate Limiting & Data Accuracy)
 # ----------------------------------------------------
 _cached_stocks = []
 _cache_timestamp = datetime.min
-_CACHE_DURATION = timedelta(minutes=15)  # Refresh every 15 minutes (balance between freshness and rate limits)
+_CACHE_DURATION = timedelta(minutes=5)  # Refresh every 5 minutes to stay within NSE API free tier limits and get fresher data
 _cache_lock = threading.Lock()
 
 def get_cached_stocks():
@@ -150,157 +174,152 @@ def update_cache(new_stocks: List[Stock]):
         _cache_timestamp = datetime.now()
 
 # ----------------------------------------------------
-# Data Fetching from Yahoo Finance (RapidAPI) - PRIMARY SOURCE
+# Data Fetching from NSE Scraper API (RapidAPI) - PRIMARY SOURCE
 # ----------------------------------------------------
-def fetch_nse_stocks_from_yfinance() -> List[Stock]:
+def fetch_nse_stocks_from_nse_scraper() -> List[Stock]:
     """
-    Fetches live NSE stock data from the Yahoo Finance proxy on RapidAPI.
+    Fetches live NSE stock data from the NSE Scraper API on RapidAPI.
     This is the new primary data source.
     """
-    rapidapi_key = os.getenv("RAPIDAPI_KEY")
-    rapidapi_host = "finance-api.p.rapidapi.com"
+    rapidapi_key = os.getenv("RAPIDAPI_KEY") # Use the same key for the NSE API
+    rapidapi_host = "nairobi-stock-exchange-nse.p.rapidapi.com" # New host
 
     if not rapidapi_key:
         logger.error("❌ RAPIDAPI_KEY environment variable not set.")
         return []
 
-    # Use the Yahoo Finance endpoint for NSE stocks
-    url = "https://finance-api.p.rapidapi.com/stock/v2/get-quote"
+    # Use the NSE Scraper API endpoint
+    url = f"https://{rapidapi_host}/stocks" # Base endpoint for all stocks
     headers = {
         "X-RapidAPI-Key": rapidapi_key,
         "X-RapidAPI-Host": rapidapi_host,
         "Content-Type": "application/json"
     }
+    # Optional params can be added here if needed (e.g., limit, sort)
+    params = {}
 
-    # List of major NSE tickers for initial fetch
-    nse_tickers = ["SCOM.NSE", "KCB.NSE", "EQTY.NSE", "EABL.NSE", "KPLC.NSE", "COOP.NSE", "NCBA.NSE", "BAT.NSE", "UNGA.NSE", "SASIN.NSE"]
-    all_stocks = []
+    try:
+        logger.info(f"📡 Fetching data from NSE Scraper API: {url.split('/')[2]}")
+        response = requests.get(url, headers=headers, params=params, timeout=15)
+        # Check for rate limit
+        if response.status_code == 429:
+             logger.warning("429 Too Many Requests received from NSE Scraper API.")
+             # Return cached data if available, otherwise empty list
+             cached = get_cached_stocks()
+             if cached:
+                 logger.info("Returning cached data due to API rate limit.")
+                 return cached
+             else:
+                 logger.error("No cached data available and API returned 429.")
+                 return []
+        response.raise_for_status()
+        data = response.json()
 
-    for ticker in nse_tickers:
-        params = {"symbol": ticker}
-        try:
-            logger.info(f"📡 Fetching data for {ticker} from Yahoo Finance...")
-            response = requests.get(url, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            data = response.json()
+        # Check the structure: {"success": true, "data": [...], "meta": {...}}
+        if not data.get('success'):
+            logger.error(f"NSE Scraper API returned success=false: {data}")
+            return []
 
-            # Parse the response structure (adjust based on actual Yahoo Finance API response)
-            quote = data.get('quoteSummary', {}).get('result', [{}])[0]
+        stock_list_raw = data.get('data', [])
+        if not isinstance(stock_list_raw, list):
+            logger.error(f"Expected list of stocks in 'data', got {type(stock_list_raw)}. Response: {data}")
+            return []
 
-            # Map fields to our Stock model
-            ticker_clean = ticker.replace(".NSE", "")
-            company = quote.get('shortName') or quote.get('longName') or f"{ticker_clean} PLC"
-            price_raw = quote.get('currentPrice') or quote.get('regularMarketPrice')
-            price = safe_float(price_raw)
-            if price <= 0:
-                logger.warning(f"Skipping {ticker} due to invalid price: {price_raw}")
+        all_stocks = []
+        for item in stock_list_raw:
+            # Map fields from the NSE Scraper API response to our Stock model
+            # Example item: {"ticker": "EQTY", "name": "Equity Group Holdings Plc", "volume": "1,234,567", "price": "45.50", "change": "+2.50 (+5.82%)"}
+            ticker = item.get('ticker')
+            if not ticker:
+                logger.warning(f"Skipping item due to missing ticker: {item}")
                 continue
 
-            change_raw = quote.get('change')
-            change = safe_float(change_raw) if change_raw is not None else 0.0
+            name = item.get('name', f"{ticker} PLC")
+            price_raw = item.get('price')
+            price = safe_float(price_raw)
+            if price <= 0:
+                logger.warning(f"Skipping {ticker} due to invalid/missing price: {price_raw}")
+                continue
 
-            change_pct_raw = quote.get('changePercent')
-            change_percent = safe_float(change_pct_raw) if change_pct_raw is not None else 0.0
+            change_str = item.get('change')
+            change_amount, change_percent = parse_change_string(change_str)
 
-            volume_raw = quote.get('volume') or quote.get('regularMarketVolume')
-            volume = safe_int(volume_raw) if volume_raw is not None else 0
-
-            dividend_yield = safe_float(quote.get('dividendYield')) if quote.get('dividendYield') else None
-            pe_ratio = safe_float(quote.get('trailingPE')) if quote.get('trailingPE') else None
-            market_cap_raw = quote.get('marketCap') or quote.get('enterpriseValue')
-            market_cap = safe_float(market_cap_raw) if market_cap_raw else None
+            volume_raw = item.get('volume')
+            # Remove commas from volume string like "1,234,567"
+            volume_str_cleaned = volume_raw.replace(',', '') if isinstance(volume_raw, str) else str(volume_raw)
+            volume = safe_int(volume_str_cleaned) if volume_str_cleaned else 0
 
             stock_obj = Stock(
-                ticker=ticker_clean.upper(),
-                company=company,
+                ticker=ticker.upper(), # Ensure uppercase
+                company=name,
                 price=price,
-                change=change,
+                change=change_amount,
                 change_percent=change_percent,
                 volume=volume,
-                dividend_yield=dividend_yield,
-                pe_ratio=pe_ratio,
-                market_cap=market_cap,
+                # Dividend yield, P/E, Market Cap might not be available, leave as None/default
+                # dividend_yield=None,
+                # pe_ratio=None,
+                # market_cap=None,
                 recommendation="HOLD"
             )
             all_stocks.append(stock_obj)
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"📡 Network error for {ticker}: {e}")
-            continue
-        except Exception as e:
-            logger.error(f"💥 Parsing error for {ticker}: {e}")
-            continue
+        logger.info(f"✅ Successfully fetched and processed {len(all_stocks)} stocks from NSE Scraper API.")
+        return all_stocks
 
-    logger.info(f"✅ Successfully fetched and processed {len(all_stocks)} stocks from Yahoo Finance.")
-    return all_stocks
+    except requests.exceptions.RequestException as e:
+        logger.error(f"📡 Network error for NSE Scraper API: {e}")
+        # Log response details if available
+        if hasattr(e, 'response') and e.response is not None:
+            logger.error(f"Response status code: {e.response.status_code}")
+            logger.error(f"Response text (first 200 chars): {e.response.text[:200]}...")
+        # Return cached data if available, otherwise empty list
+        cached = get_cached_stocks()
+        if cached:
+             logger.info("Returning cached data due to network error.")
+             return cached
+        else:
+             logger.error("No cached data available and API call failed.")
+             return []
+    except Exception as e:
+        logger.error(f"💥 Parsing error for NSE Scraper API: {e}")
+        logger.exception("Full traceback:")
+        # Return cached data if available, otherwise empty list
+        cached = get_cached_stocks()
+        if cached:
+             logger.info("Returning cached data due to parsing error.")
+             return cached
+        else:
+             logger.error("No cached data available and API call failed.")
+             return []
 
 def fetch_live_stocks() -> List[Stock]:
-    """Main entry point for fetching stocks. Uses cache first, then Yahoo Finance."""
+    """Main entry point for fetching stocks. Uses cache first, then NSE Scraper API."""
     cached = get_cached_stocks()
     if cached:
         logger.info("✅ Returning cached stock data.")
         return cached
 
-    logger.info("🔄 Cache miss. Fetching fresh data from Yahoo Finance...")
-    stocks = fetch_nse_stocks_from_yfinance()
+    logger.info("🔄 Cache miss. Fetching fresh data from NSE Scraper API...")
+    stocks = fetch_nse_stocks_from_nse_scraper()
     update_cache(stocks)
     return stocks
 
 def fetch_stock_data_for_ticker(ticker: str) -> Optional[Stock]:
     """
-    Fetches detailed data for a single ticker using the same Yahoo Finance source.
-    Used by prediction and extended data endpoints.
+    Fetches detailed data for a single ticker using the NSE Scraper API.
+    This implementation fetches all stocks and filters, which is inefficient for single lookups.
+    A better approach would be an API endpoint like `/stocks?search={ticker}` if available.
+    For now, this works with the existing structure.
     """
-    rapidapi_key = os.getenv("RAPIDAPI_KEY")
-    rapidapi_host = "finance-api.p.rapidapi.com"
+    # Fetch all stocks (uses cache internally)
+    all_stocks = fetch_live_stocks()
+    # Find the specific stock
+    for stock in all_stocks:
+        if stock.ticker == ticker.upper():
+            return stock
+    return None # Not found
 
-    if not rapidapi_key:
-        return None
-
-    url = "https://finance-api.p.rapidapi.com/stock/v2/get-quote"
-    headers = {
-        "X-RapidAPI-Key": rapidapi_key,
-        "X-RapidAPI-Host": rapidapi_host,
-        "Content-Type": "application/json"
-    }
-
-    # Ensure the ticker is in the correct format for Yahoo Finance (e.g., SCOM.NSE)
-    if not ticker.endswith(".NSE"):
-        ticker = f"{ticker}.NSE"
-
-    params = {"symbol": ticker}
-    try:
-        response = requests.get(url, headers=headers, params=params, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        quote = data.get('quoteSummary', {}).get('result', [{}])[0]
-
-        # Parse the data (same logic as above)
-        company = quote.get('shortName') or quote.get('longName') or f"{ticker.replace('.NSE', '')} PLC"
-        price = safe_float(quote.get('currentPrice'))
-        change = safe_float(quote.get('change')) or 0.0
-        change_percent = safe_float(quote.get('changePercent')) or 0.0
-        volume = safe_int(quote.get('volume')) or 0
-        dividend_yield = safe_float(quote.get('dividendYield')) if quote.get('dividendYield') else None
-        pe_ratio = safe_float(quote.get('trailingPE')) if quote.get('trailingPE') else None
-        market_cap = safe_float(quote.get('marketCap')) if quote.get('marketCap') else None
-
-        return Stock(
-            ticker=ticker.replace(".NSE", "").upper(),
-            company=company,
-            price=price,
-            change=change,
-            change_percent=change_percent,
-            volume=volume,
-            dividend_yield=dividend_yield,
-            pe_ratio=pe_ratio,
-            market_cap=market_cap,
-            recommendation="HOLD"
-        )
-
-    except Exception as e:
-        logger.error(f"Failed to fetch data for {ticker}: {e}")
-        return None
 
 # --- PREDICTION CACHING & RATE LIMITING IMPLEMENTATION ---
 # --- CONFIGURATION ---
@@ -309,7 +328,7 @@ MARKET_CLOSE_HOUR = 4 # Assuming market closes at 4 PM EAT
 CACHE_DURATION_MARKET_HOURS = timedelta(minutes=15)
 CACHE_DURATION_OFF_MARKET_HOURS = timedelta(hours=4)
 RATE_LIMIT_WINDOW_SECONDS = 3600  # 60 minutes
-RATE_LIMIT_MAX_REQUESTS = 15
+RATE_LIMIT_MAX_REQUESTS = 15 # Adjust based on NSE API limits if needed
 # --- END CONFIGURATION ---
 
 # --- IN-MEMORY CACHE STRUCTURE ---
@@ -424,18 +443,18 @@ async def startup_event():
 async def root():
     return {
         "status": "online",
-        "service": "Treval AI NSE Live Data API v2.1",
-        "source": "Yahoo Finance (RapidAPI)",
+        "service": "Treval AI NSE Live Data API v2.1.1",
+        "source": "NSE Scraper API (RapidAPI)", # Updated source
         "features": ["Live Data", "Prediction Caching", "Rate Limiting"],
         "cloud_hosted": True,
         "python_version": platform.python_version(),
         "timestamp": datetime.now().isoformat(),
-        "note": "Deployed on Render. Uses a high-rate-limit free-tier API."
+        "note": "Deployed on Render. Uses the verified NSE Scraper API."
     }
 
 @app.get("/api/v1/stocks")
 async def get_all_stocks():
-    """Fetch all currently tracked stocks from Yahoo Finance."""
+    """Fetch all currently tracked stocks from NSE Scraper API."""
     stocks = fetch_live_stocks()
     if not stocks:
         logger.info("No stocks returned from primary fetch function.")
@@ -447,12 +466,12 @@ async def get_stock_details(ticker: str):
     ticker = ticker.upper()
     stock = fetch_stock_data_for_ticker(ticker)
     if stock is None:
-        raise HTTPException(status_code=404, detail=f"Stock with ticker '{ticker}' not found in Yahoo Finance data.")
+        raise HTTPException(status_code=404, detail=f"Stock with ticker '{ticker}' not found in NSE Scraper data.")
     return stock
 
 @app.get("/api/v1/market-summary")
 async def market_summary():
-    """Provide a high-level summary of the market based on Yahoo Finance data."""
+    """Provide a high-level summary of the market based on NSE Scraper data."""
     stocks = fetch_live_stocks()
     if not stocks:
         return {"message": "No live stock data available."}
@@ -467,7 +486,7 @@ async def market_summary():
 
     return {
         "timestamp": datetime.now().isoformat(),
-        "data_source": "Yahoo Finance (RapidAPI)",
+        "data_source": "NSE Scraper API (RapidAPI)", # Updated source
         "total_stocks_analyzed": total_stocks,
         "gainers_count": len(gainers),
         "losers_count": len(losers),
